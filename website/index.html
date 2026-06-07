@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drew's Discord upload/reddit tool</title>
+    <link href="https://fonts.googleapis.com/css2?family=Bona+Nova+SC&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
+</head>
+<body>
+    <div class="bg-blobs" aria-hidden="true"><span class="b1"></span><span class="b2"></span><span class="b3"></span></div>
+    <header class="topbar">
+        <img src="{{ url_for('static', filename='logo.svg') }}" alt="Logo" class="topbar-logo">
+        <h1>Upload Images/Videos or Send Reddit Posts to Discord Webhook</h1>
+    </header>
+    <div class="container">
+
+        <div class="section">
+            <h2>Requirement: Enter the Webhook URL</h2>
+            <input type="url" id="webhook-url" placeholder="https://discord.com/api/webhooks/..." required>
+        </div>
+
+        <div class="section">
+            <h2>Option 1: Upload Images / Videos</h2>
+            <input type="file" id="file-upload" multiple accept="image/*,video/*">
+            <button onclick="uploadFiles()">Upload</button>
+            <div id="upload-list"></div>
+        </div>
+
+        <div class="section">
+            <h2>Option 2: Fetch Reddit Posts</h2>
+            <input type="text" id="subreddit-name" placeholder="Enter Subreddit Name (e.g. 'python')" required>
+            <input type="number" id="num-items" placeholder="Number of posts to fetch" required>
+            <button onclick="previewRedditPosts()">Preview</button>
+            <button onclick="fetchRedditPosts()">Fetch and Send Reddit Posts</button>
+            <div id="reddit-preview"></div>
+        </div>
+
+        <div id="status-message" role="status" aria-live="polite"></div>
+    </div>
+
+    <script>
+        const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+        function setStatus(msg, ok) {
+            const s = document.getElementById('status-message');
+            s.textContent = msg;
+            s.style.color = ok ? '#ef4444' : '#dc2626';
+        }
+
+        function escapeHtml(str) {
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function uploadOne(webhookUrl, file, row) {
+            return new Promise(resolve => {
+                const bar = row.querySelector('.bar-fill');
+                const state = row.querySelector('.row-state');
+                const formData = new FormData();
+                formData.append('webhook_url', webhookUrl);
+                formData.append('files[]', file);
+
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/upload');
+                xhr.upload.onprogress = e => {
+                    if (e.lengthComputable) bar.style.width = Math.round((e.loaded / e.total) * 100) + '%';
+                };
+                xhr.onload = () => {
+                    let data = {};
+                    try { data = JSON.parse(xhr.responseText); } catch (_) {}
+                    const ok = xhr.status === 200 && data.uploaded_count >= 1;
+                    bar.style.width = '100%';
+                    bar.style.background = ok ? '#16a34a' : '#dc2626';
+                    state.textContent = ok ? 'done' : (data.failed_files && data.failed_files[0]) || 'failed';
+                    resolve(ok);
+                };
+                xhr.onerror = () => { state.textContent = 'failed'; bar.style.background = '#dc2626'; resolve(false); };
+                xhr.send(formData);
+            });
+        }
+
+        async function uploadFiles() {
+            const webhookUrl = document.getElementById('webhook-url').value;
+            const fileInput = document.getElementById('file-upload');
+            const list = document.getElementById('upload-list');
+
+            if (!webhookUrl) { setStatus('Please enter a webhook URL', false); return; }
+            if (fileInput.files.length === 0) { setStatus('Please select images or videos to upload', false); return; }
+
+            const files = [];
+            const rejected = [];
+            for (const f of fileInput.files) {
+                if (f.size === 0) rejected.push(`${f.name} (empty)`);
+                else if (f.size > MAX_UPLOAD_BYTES) rejected.push(`${f.name} (over 25 MB)`);
+                else files.push(f);
+            }
+            if (!files.length) { setStatus('No valid files to upload: ' + rejected.join(', '), false); return; }
+
+            list.innerHTML = '';
+            const rows = files.map(f => {
+                const row = document.createElement('div');
+                row.className = 'upload-row';
+                row.innerHTML = `<span class="row-name">${escapeHtml(f.name)}</span>`
+                    + `<span class="bar"><span class="bar-fill"></span></span>`
+                    + `<span class="row-state">queued</span>`;
+                list.appendChild(row);
+                return row;
+            });
+
+            let ok = 0;
+            for (let i = 0; i < files.length; i++) {
+                rows[i].querySelector('.row-state').textContent = 'uploading';
+                if (await uploadOne(webhookUrl, files[i], rows[i])) ok++;
+            }
+            const extra = rejected.length ? ` (${rejected.length} skipped client-side)` : '';
+            setStatus(`${ok}/${files.length} files uploaded successfully${extra}`, ok === files.length);
+        }
+
+        function previewRedditPosts() {
+            const subredditName = document.getElementById('subreddit-name').value;
+            const numItems = document.getElementById('num-items').value;
+            const preview = document.getElementById('reddit-preview');
+
+            if (!subredditName || !numItems) { setStatus('Enter a subreddit and number of posts', false); return; }
+
+            preview.innerHTML = '<p>Loading preview…</p>';
+            const formData = new FormData();
+            formData.append('subreddit_name', subredditName);
+            formData.append('num_items', numItems);
+
+            fetch('/preview_reddit', { method: 'POST', body: formData })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status !== 'success') { preview.innerHTML = ''; setStatus(data.message || 'Preview failed', false); return; }
+                    if (!data.posts.length) { preview.innerHTML = '<p>No new media posts to send.</p>'; return; }
+                    const rows = data.posts.map(p => {
+                        const kind = p.video_url ? 'Video' : 'Image';
+                        const thumb = p.image_url ? `<img src="${escapeHtml(p.image_url)}" alt="" class="preview-thumb" loading="lazy">` : '';
+                        return `<div class="preview-row">${thumb}<span>[${kind}] ${escapeHtml(p.title)}</span></div>`;
+                    }).join('');
+                    preview.innerHTML = `<p>${data.count} post(s) would be sent:</p>${rows}`
+                        + `<button onclick="fetchRedditPosts()">Send these to Discord</button>`;
+                })
+                .catch(err => { preview.innerHTML = ''; setStatus(`Preview failed: ${err.message}`, false); });
+        }
+
+        function fetchRedditPosts() {
+            const webhookUrl = document.getElementById('webhook-url').value;
+            const subredditName = document.getElementById('subreddit-name').value;
+            const numItems = document.getElementById('num-items').value;
+
+            if (!webhookUrl || !subredditName || !numItems) {
+                setStatus('Please fill all required fields (webhook URL included)', false);
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('webhook_url', webhookUrl);
+            formData.append('subreddit_name', subredditName);
+            formData.append('num_items', numItems);
+
+            setStatus('Sending…', true);
+            fetch('/fetch_reddit', { method: 'POST', body: formData })
+                .then(response => response.json())
+                .then(data => {
+                    setStatus(data.message, data.status === 'success');
+                    document.getElementById('reddit-preview').innerHTML = '';
+                })
+                .catch(error => setStatus(`Reddit fetch failed: ${error.message}`, false));
+        }
+    </script>
+</body>
+</html>
