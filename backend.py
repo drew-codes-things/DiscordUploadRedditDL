@@ -536,7 +536,7 @@ def upload_file():
         except Exception:
             failed_files.append(safe_name)
 
-    logger.info("RESULT: Successfully sent uploaded files")
+    logger.info(f"RESULT: {uploaded_files}/{len(files)} files uploaded successfully")
     return jsonify(
         {
             "message": f"{uploaded_files}/{len(files)} files uploaded successfully",

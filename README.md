@@ -135,6 +135,20 @@ The server starts on `http://0.0.0.0:1432`. Open `http://localhost:1432` in your
 
 ---
 
+## Get the Code
+
+Clone with git:
+
+```bash
+git clone https://github.com/drew-codes-things/DiscordUploadRedditDL.git
+```
+
+Or with the [GitHub CLI](https://cli.github.com/):
+
+```bash
+gh repo clone drew-codes-things/DiscordUploadRedditDL
+```
+
 ## License
 
 MIT - made by [Drew](https://github.com/drew-codes-things)
