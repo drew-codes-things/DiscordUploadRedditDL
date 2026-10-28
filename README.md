@@ -65,6 +65,23 @@ A 0.5s delay is added between consecutive webhook posts to avoid rate limiting.
 
 ---
 
+## Discord Relay Source
+
+Posts can also come from the Discord relay [RedditDownloaderV4](https://github.com/drew-codes-things/RedditDownloaderV4) uses instead of RSS: its Devvit app scans a subreddit inside Reddit and posts `RELAY:` batches of media links to a Discord webhook, which this app reads back with a bot token.
+
+```
+Devvit app -> relay webhook -> relay channel -> this app -> your webhook embed -> sent_posts.json
+```
+
+1. Set up the Devvit app, webhook and bot as in RedditDownloaderV4's README (the bot needs **Message Content Intent** and Read Message History in the relay channel)
+2. Add `RELAY_BOT_TOKEN`, `RELAY_CHANNEL_ID`, and optionally `RELAY_WEBHOOK_ID` (the `{id}` in the relay webhook's URL) to `.env`
+3. In Reddit, run **[starbottyyay] Fetch Media to Server** on the subreddit
+4. Pick **Discord relay** in the source dropdown, then preview or send as usual
+
+Only batches posted by a webhook (and only `RELAY_WEBHOOK_ID`'s, if set) are read; the newest 500 relay messages are searched for that subreddit's posts. Relay items carry no post title, so embeds are titled `r/<subreddit> post <id>`.
+
+---
+
 ## File Upload
 
 The `/upload` endpoint accepts multi-file form posts and forwards each file to the Discord webhook as a direct attachment. Files are validated before sending:
@@ -124,6 +141,7 @@ The server starts on `http://0.0.0.0:1432`. Open `http://localhost:1432` in your
 | `webhook_url` | string | Discord webhook URL |
 | `subreddit_name` | string | Subreddit name, `r/name`, or full URL |
 | `num_items` | integer | Number of media posts to send (max 200) |
+| `source` | string | `rss` (default) or `relay` - also accepted by `POST /preview_reddit` |
 
 ---
 

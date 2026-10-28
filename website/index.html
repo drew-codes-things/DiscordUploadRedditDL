@@ -32,6 +32,10 @@
             <h2>Option 2: Fetch Reddit Posts</h2>
             <input type="text" id="subreddit-name" placeholder="Enter Subreddit Name (e.g. 'python')" required>
             <input type="number" id="num-items" placeholder="Number of posts to fetch" required>
+            <select id="reddit-source" aria-label="Where to get posts from">
+                <option value="rss">Reddit RSS feed</option>
+                <option value="relay">Discord relay (RedditDownloaderV4's Devvit app)</option>
+            </select>
             <button onclick="previewRedditPosts()">Preview</button>
             <button onclick="fetchRedditPosts()">Fetch and Send Reddit Posts</button>
             <div id="reddit-preview"></div>
@@ -128,6 +132,7 @@
             const formData = new FormData();
             formData.append('subreddit_name', subredditName);
             formData.append('num_items', numItems);
+            formData.append('source', document.getElementById('reddit-source').value);
 
             fetch('/preview_reddit', { method: 'POST', body: formData })
                 .then(r => r.json())
@@ -159,6 +164,7 @@
             formData.append('webhook_url', webhookUrl);
             formData.append('subreddit_name', subredditName);
             formData.append('num_items', numItems);
+            formData.append('source', document.getElementById('reddit-source').value);
 
             setStatus('Sending…', true);
             fetch('/fetch_reddit', { method: 'POST', body: formData })

@@ -75,7 +75,7 @@ h2::before { content: "// "; color: var(--text-faint); }
 }
 .section:hover::before, .section:focus-within::before { opacity: 1; }
 
-#webhook-url, #file-upload, #subreddit-name, #num-items {
+#webhook-url, #file-upload, #subreddit-name, #num-items, #reddit-source {
     width: 100%;
     padding: 10px;
     margin-bottom: 15px;
@@ -87,7 +87,7 @@ h2::before { content: "// "; color: var(--text-faint); }
     box-sizing: border-box;
     transition: border-color .2s ease;
 }
-#webhook-url:focus, #file-upload:focus, #subreddit-name:focus, #num-items:focus {
+#webhook-url:focus, #file-upload:focus, #subreddit-name:focus, #num-items:focus, #reddit-source:focus {
     outline: none;
     border-color: var(--signal);
 }

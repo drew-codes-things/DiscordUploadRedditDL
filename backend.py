@@ -40,6 +40,13 @@ WEBHOOK_POST_DELAY   = 0.5
 WEBHOOK_POST_TIMEOUT = 15
 WEBHOOK_MAX_RETRY_WAIT = 30
 
+RELAY_BOT_TOKEN = (os.getenv("RELAY_BOT_TOKEN") or "").strip()
+RELAY_CHANNEL_ID = (os.getenv("RELAY_CHANNEL_ID") or "").strip()
+RELAY_WEBHOOK_ID = (os.getenv("RELAY_WEBHOOK_ID") or "").strip()
+RELAY_MESSAGE_PREFIX = "RELAY:"
+RELAY_MAX_PAGES = 5
+DISCORD_API_BASE = "https://discord.com/api/v10"
+
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 VIDEO_EXTENSIONS = (".mp4", ".webm", ".mov", ".mkv", ".avi")
 
@@ -113,11 +120,6 @@ def allowed_file(filename):
 
 
 def detect_media(data):
-    """Return a media type from the file's magic bytes, or None if unrecognised.
-
-    Guards against a file with an allowed extension but non-media contents
-    (e.g. an HTML page renamed to .png).
-    """
     if data[:8] == b"\x89PNG\r\n\x1a\n":
         return "png"
     if data[:3] == b"\xff\xd8\xff":
@@ -136,7 +138,6 @@ def detect_media(data):
 
 
 def post_to_webhook(webhook_url, **kwargs):
-    """POST to a Discord webhook, waiting out one rate limit (429) before giving up."""
     response = requests.post(webhook_url, timeout=WEBHOOK_POST_TIMEOUT, **kwargs)
     if response.status_code != 429:
         return response
@@ -222,36 +223,13 @@ def _rss_get_raw(url, timeout=15):
 
 
 def _preview_to_original(url):
-    """
-    Rewrite a preview.redd.it URL to the original i.redd.it image.
-
-    preview.redd.it URLs look like:
-      https://preview.redd.it/abcdef.jpg?width=960&...&s=<hash>
-    The path component (abcdef.jpg) is the same filename hosted on i.redd.it.
-    Stripping the host swap and query string gives the full-resolution original.
-    """
     parsed = urlparse(url)
-    # Only Reddit-hosted previews have an i.redd.it original; external-preview.redd.it
-    # is a cached copy of an off-site image and must keep its signed query string.
     if parsed.netloc.lower() == "preview.redd.it":
         return f"https://i.redd.it{parsed.path}"
     return url
 
 
 def _extract_image_from_html(raw_content):
-    """
-    Extract the best image URL from RSS <content> HTML.
-
-    Reddit HTML-escapes the content inside the Atom <content> element, so
-    <img src="https://..."> arrives as &lt;img src=&quot;https://...&quot;&gt;
-    We must unescape before running the regex.
-
-    Preference order:
-      1. i.redd.it (full-resolution Reddit-hosted image)
-      2. preview.redd.it -> rewritten to i.redd.it for original quality
-      3. external-preview.redd.it
-      4. Any other image URL with a known extension
-    """
     if not raw_content:
         return None
 
@@ -286,7 +264,6 @@ def _extract_image_from_html(raw_content):
 
 
 def _extract_video_from_html(raw_content):
-    """Extract a video URL from RSS content HTML if present."""
     if not raw_content:
         return None
     unescaped = html.unescape(raw_content)
@@ -299,12 +276,6 @@ def _extract_video_from_html(raw_content):
 
 
 def _find_first(parent, *tags):
-    """Return the first matching child element, or None.
-
-    ElementTree elements with no children are falsy, so `a or b` chains on
-    find() results silently skip valid-but-empty elements (e.g. a <title> that
-    has text but no child tags). Compare against None explicitly instead.
-    """
     for tag in tags:
         el = parent.find(tag)
         if el is not None:
@@ -403,18 +374,6 @@ def fetch_reddit_posts_rss(subreddit_name, limit):
 
 
 def resolve_rss_post_media(rss_post):
-    """
-    Resolve image/video for a post using only the RSS feed data.
-
-    The unauthenticated .json endpoint is deprecated by Reddit (June 2026),
-    so we rely entirely on what the Atom feed provides:
-      1. Video URL in <content> HTML
-      2. Image URL in <content> HTML (unescaped; preview.redd.it upgraded to i.redd.it)
-      3. media:thumbnail if it is a real URL (not a placeholder string)
-
-    Returns dict: {video_url, image_url}
-    Skips selftext - caller should discard posts with no media.
-    """
     raw_content = rss_post.get("raw_content", "")
     thumbnail   = rss_post.get("thumbnail", "")
 
@@ -430,6 +389,84 @@ def resolve_rss_post_media(rss_post):
         return {"video_url": None, "image_url": thumbnail}
 
     return {"video_url": None, "image_url": None}
+
+
+def relay_configured():
+    return bool(RELAY_BOT_TOKEN and RELAY_CHANNEL_ID)
+
+
+def parse_relay_message(message):
+    content = message.get("content") or ""
+    if not content.startswith(RELAY_MESSAGE_PREFIX):
+        return []
+    webhook_id = message.get("webhook_id")
+    if not webhook_id or (RELAY_WEBHOOK_ID and webhook_id != RELAY_WEBHOOK_ID):
+        logger.warning(f"Ignoring RELAY message {message.get('id')} not sent by the relay webhook")
+        return []
+    try:
+        items = json.loads(content[len(RELAY_MESSAGE_PREFIX):])
+    except json.JSONDecodeError:
+        logger.error(f"Invalid RELAY payload in message {message.get('id')}")
+        return []
+    if not isinstance(items, list):
+        return []
+    return [item for item in items
+            if isinstance(item, dict) and isinstance(item.get("url"), str) and item.get("postId")]
+
+
+def _relay_media(url):
+    path = urlparse(url).path.lower()
+    if "v.redd.it" in url or path.endswith(VIDEO_EXTENSIONS + (".m3u8", ".mpd")):
+        return {"video_url": url, "image_url": None}
+    return {"video_url": None, "image_url": url}
+
+
+def fetch_relay_posts(subreddit_name, limit):
+    wanted = normalize_subreddit_name(subreddit_name).lower()
+    headers = {"Authorization": f"Bot {RELAY_BOT_TOKEN}"}
+    posts = {}
+    before = None
+    for _page in range(RELAY_MAX_PAGES):
+        params = {"limit": 100}
+        if before:
+            params["before"] = before
+        response = requests.get(f"{DISCORD_API_BASE}/channels/{RELAY_CHANNEL_ID}/messages",
+                                headers=headers, params=params, timeout=15)
+        if response.status_code == 429:
+            time.sleep(min(float(response.json().get("retry_after", 1)), WEBHOOK_MAX_RETRY_WAIT))
+            continue
+        response.raise_for_status()
+        messages = response.json()
+        if not messages:
+            break
+        for message in messages:
+            for item in parse_relay_message(message):
+                if str(item.get("subreddit", "")).lower() != wanted:
+                    continue
+                post_id = str(item["postId"])
+                post_id = post_id[3:] if post_id.startswith("t3_") else post_id
+                if post_id in posts:
+                    continue
+                posts[post_id] = {
+                    "id": post_id,
+                    "title": f"r/{item['subreddit']} post {post_id}",
+                    "permalink_full": f"https://www.reddit.com/comments/{post_id}",
+                    "media": _relay_media(item["url"]),
+                }
+        if len(posts) >= limit:
+            break
+        before = messages[-1]["id"]
+    return list(posts.values())
+
+
+def load_reddit_posts(source, subreddit_name, limit):
+    if source == "relay":
+        return fetch_relay_posts(subreddit_name, limit)
+    return fetch_reddit_posts_rss(subreddit_name, limit)
+
+
+def post_media(post):
+    return post["media"] if "media" in post else resolve_rss_post_media(post)
 
 
 def load_sent_posts():
@@ -573,7 +610,6 @@ def upload_file():
 @app.route("/preview_reddit", methods=["POST"])
 @limiter.limit("30 per minute")
 def preview_reddit():
-    """Return the media posts that WOULD be sent, without sending them (preview step)."""
     subreddit_name = request.form.get("subreddit_name", "").strip()
     if not subreddit_name:
         return jsonify({"status": "error", "message": "subreddit_name is required"}), 400
@@ -586,15 +622,21 @@ def preview_reddit():
     if num_items <= 0 or num_items > MAX_REDDIT_ITEMS:
         return jsonify({"status": "error", "message": f"num_items must be between 1 and {MAX_REDDIT_ITEMS}"}), 400
 
+    source = request.form.get("source", "rss").strip().lower()
+    if source not in ("rss", "relay"):
+        return jsonify({"status": "error", "message": "source must be rss or relay"}), 400
+    if source == "relay" and not relay_configured():
+        return jsonify({"status": "error", "message": "Set RELAY_BOT_TOKEN and RELAY_CHANNEL_ID in .env to use the Discord relay"}), 400
+
     try:
         sent_posts = load_sent_posts()
-        all_posts = fetch_reddit_posts_rss(subreddit_name, num_items * 3)
+        all_posts = load_reddit_posts(source, subreddit_name, num_items * 3)
         unsent = [p for p in all_posts if p.get("id") not in sent_posts]
         preview = []
         for post in unsent:
             if len(preview) >= num_items:
                 break
-            media = resolve_rss_post_media(post)
+            media = post_media(post)
             if not media["video_url"] and not media["image_url"]:
                 continue
             preview.append({
@@ -634,20 +676,26 @@ def fetch_reddit():
     if num_items > MAX_REDDIT_ITEMS:
         return jsonify({"status": "error", "message": f"num_items cannot exceed {MAX_REDDIT_ITEMS}. Requested: {num_items}"}), 400
 
+    source = request.form.get("source", "rss").strip().lower()
+    if source not in ("rss", "relay"):
+        return jsonify({"status": "error", "message": "source must be rss or relay"}), 400
+    if source == "relay" and not relay_configured():
+        return jsonify({"status": "error", "message": "Set RELAY_BOT_TOKEN and RELAY_CHANNEL_ID in .env to use the Discord relay"}), 400
+
     try:
         sent_posts  = load_sent_posts()
         sent_count  = 0
         skip_count  = 0
         failed_items = []
 
-        all_posts = fetch_reddit_posts_rss(subreddit_name, num_items * 3)
+        all_posts = load_reddit_posts(source, subreddit_name, num_items * 3)
         unsent    = [p for p in all_posts if p.get("id") not in sent_posts]
 
         for post in unsent:
             if sent_count >= num_items:
                 break
 
-            media     = resolve_rss_post_media(post)
+            media     = post_media(post)
             video_url = media["video_url"]
             image_url = media["image_url"]
 
