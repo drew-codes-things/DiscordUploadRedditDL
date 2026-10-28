@@ -38,6 +38,7 @@ REDDIT_RETRY_BACKOFF_SECONDS = 1.0
 
 WEBHOOK_POST_DELAY   = 0.5
 WEBHOOK_POST_TIMEOUT = 15
+WEBHOOK_MAX_RETRY_WAIT = 30
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 VIDEO_EXTENSIONS = (".mp4", ".webm", ".mov", ".mkv", ".avi")
@@ -51,6 +52,8 @@ SKIP_THUMBS = {"self", "default", "nsfw", "spoiler", "image", ""}
 
 class CustomFormatter(logging.Formatter):
     def format(self, record):
+        if not isinstance(record.msg, str):
+            return super().format(record)
         if record.levelno == logging.INFO and record.msg.startswith(("Starting", "Ready", "Shutting down")):
             return f"INFO: {record.msg}"
         if record.levelno == logging.INFO and "WEBSITE" in record.msg:
@@ -132,6 +135,23 @@ def detect_media(data):
     return None
 
 
+def post_to_webhook(webhook_url, **kwargs):
+    """POST to a Discord webhook, waiting out one rate limit (429) before giving up."""
+    response = requests.post(webhook_url, timeout=WEBHOOK_POST_TIMEOUT, **kwargs)
+    if response.status_code != 429:
+        return response
+    try:
+        retry_after = float(response.json().get("retry_after", 1))
+    except ValueError:
+        retry_after = 1.0
+    time.sleep(min(retry_after, WEBHOOK_MAX_RETRY_WAIT))
+    files = kwargs.get("files")
+    if files:
+        for _name, file_obj in files.values():
+            file_obj.seek(0)
+    return requests.post(webhook_url, timeout=WEBHOOK_POST_TIMEOUT, **kwargs)
+
+
 def validate_webhook_url(url):
     return url.startswith("https://discord.com/api/webhooks/")
 
@@ -211,7 +231,9 @@ def _preview_to_original(url):
     Stripping the host swap and query string gives the full-resolution original.
     """
     parsed = urlparse(url)
-    if "preview.redd.it" in parsed.netloc:
+    # Only Reddit-hosted previews have an i.redd.it original; external-preview.redd.it
+    # is a cached copy of an off-site image and must keep its signed query string.
+    if parsed.netloc.lower() == "preview.redd.it":
         return f"https://i.redd.it{parsed.path}"
     return url
 
@@ -242,11 +264,12 @@ def _extract_image_from_html(raw_content):
 
     def _score(u):
         u_low = u.lower()
-        if "i.redd.it" in u_low:
+        host = urlparse(u_low).netloc
+        if host == "i.redd.it":
             return 3
-        if "preview.redd.it" in u_low:
+        if host == "preview.redd.it":
             return 2
-        if "external-preview.redd.it" in u_low:
+        if host == "external-preview.redd.it":
             return 1
         if any(u_low.split("?")[0].endswith(ext) for ext in IMAGE_EXTENSIONS):
             return 0
@@ -524,10 +547,9 @@ def upload_file():
             continue
 
         try:
-            response = requests.post(
+            response = post_to_webhook(
                 webhook_url,
                 files={"file": (safe_name, io.BytesIO(file_bytes))},
-                timeout=WEBHOOK_POST_TIMEOUT,
             )
             if response.status_code in [200, 204]:
                 uploaded_files += 1
@@ -649,11 +671,7 @@ def fetch_reddit():
                 embed["image"] = {"url": image_url}
 
             try:
-                response = requests.post(
-                    webhook_url,
-                    json={"embeds": [embed]},
-                    timeout=WEBHOOK_POST_TIMEOUT,
-                )
+                response = post_to_webhook(webhook_url, json={"embeds": [embed]})
                 if response.status_code == 204:
                     post_key = post.get("id") or post.get("permalink_path") or post.get("permalink_full")
                     if post_key:
