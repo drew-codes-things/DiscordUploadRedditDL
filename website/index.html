@@ -49,7 +49,7 @@
         function setStatus(msg, ok) {
             const s = document.getElementById('status-message');
             s.textContent = msg;
-            s.style.color = ok ? '#35d67c' : '#ff4d2e';
+            s.style.color = ok ? '#4ade80' : '#e5383b';
         }
 
         function escapeHtml(str) {
@@ -74,11 +74,11 @@
                     try { data = JSON.parse(xhr.responseText); } catch (_) {}
                     const ok = xhr.status === 200 && data.uploaded_count >= 1;
                     bar.style.width = '100%';
-                    bar.style.background = ok ? '#35d67c' : '#ff4d2e';
+                    bar.style.background = ok ? '#4ade80' : '#e5383b';
                     state.textContent = ok ? 'done' : (data.failed_files && data.failed_files[0]) || 'failed';
                     resolve(ok);
                 };
-                xhr.onerror = () => { state.textContent = 'failed'; bar.style.background = '#ff4d2e'; resolve(false); };
+                xhr.onerror = () => { state.textContent = 'failed'; bar.style.background = '#e5383b'; resolve(false); };
                 xhr.send(formData);
             });
         }
