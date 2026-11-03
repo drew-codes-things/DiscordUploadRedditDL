@@ -91,7 +91,7 @@ The `/upload` endpoint accepts multi-file form posts and forwards each file to t
 - Maximum file size: 25 MB per file (empty files are rejected)
 - The webhook URL must start with `https://discord.com/api/webhooks/`
 
-The browser UI guards empty/oversized files client-side and shows a **per-file progress bar** as each uploads. The Reddit->Discord flow has a **Preview** step (`/preview_reddit`) that lists the posts that would be sent before you send them.
+The browser UI guards empty/oversized files client-side and shows a **per-file progress bar** as each uploads. Uploads that fail for a temporary reason (network drop, rate limit, or a Discord/server error) are retried once automatically after a short pause; anything still failing gets a **Retry failed** button, while files rejected for their contents are not retried. The Reddit->Discord flow has a **Preview** step (`/preview_reddit`) that lists the posts that would be sent before you send them.
 
 Responses carry security headers (`Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`). A `/health` endpoint returns `{"status":"ok"}` for uptime checks. Set `LOG_JSON=true` to emit structured JSON logs (requests + app events) to stdout.
 
