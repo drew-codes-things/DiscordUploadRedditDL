@@ -80,6 +80,8 @@ Devvit app -> relay webhook -> relay channel -> this app -> your webhook embed -
 
 Only batches posted by a webhook (and only `RELAY_WEBHOOK_ID`'s, if set) are read; the newest 500 relay messages are searched for that subreddit's posts. Relay items carry no post title, so embeds are titled `r/<subreddit> post <id>`.
 
+After a send, any relay message whose posts have all been sent (in this run or an earlier one) is deleted from Discord, so the channel only holds what's still waiting. Previews never delete anything. Deleting needs the bot to have **Manage Messages** in the relay channel; without it, messages are just left in place. Set `DELETE_RELAY_MESSAGES=false` in `.env` to keep every message.
+
 ---
 
 ## File Upload

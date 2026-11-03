@@ -45,6 +45,7 @@ RELAY_CHANNEL_ID = (os.getenv("RELAY_CHANNEL_ID") or "").strip()
 RELAY_WEBHOOK_ID = (os.getenv("RELAY_WEBHOOK_ID") or "").strip()
 RELAY_MESSAGE_PREFIX = "RELAY:"
 RELAY_MAX_PAGES = 5
+DELETE_RELAY_MESSAGES = (os.getenv("DELETE_RELAY_MESSAGES") or "true").strip().lower() != "false"
 DISCORD_API_BASE = "https://discord.com/api/v10"
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
@@ -414,6 +415,46 @@ def parse_relay_message(message):
             if isinstance(item, dict) and isinstance(item.get("url"), str) and item.get("postId")]
 
 
+def relay_post_id(item):
+    post_id = str(item["postId"])
+    return post_id[3:] if post_id.startswith("t3_") else post_id
+
+
+def delete_relay_message(message_id):
+    url = f"{DISCORD_API_BASE}/channels/{RELAY_CHANNEL_ID}/messages/{message_id}"
+    headers = {"Authorization": f"Bot {RELAY_BOT_TOKEN}"}
+    response = requests.delete(url, headers=headers, timeout=15)
+    if response.status_code == 429:
+        time.sleep(min(float(response.json().get("retry_after", 1)), WEBHOOK_MAX_RETRY_WAIT))
+        response = requests.delete(url, headers=headers, timeout=15)
+    if response.status_code in (204, 404):
+        return True
+    if response.status_code == 403:
+        logger.warning("Can't delete relay messages: give the bot Manage Messages in the relay channel")
+    else:
+        logger.error(f"Deleting relay message {message_id} failed with HTTP {response.status_code}")
+    return False
+
+
+def finished_relay_messages(posts, sent_posts):
+    messages = {}
+    for post in posts:
+        messages.update(post.get("relay_messages", {}))
+    return [message_id for message_id, post_ids in messages.items()
+            if post_ids and all(post_id in sent_posts for post_id in post_ids)]
+
+
+def delete_finished_relay_messages(posts, sent_posts):
+    if not DELETE_RELAY_MESSAGES:
+        return 0
+    deleted = 0
+    for message_id in finished_relay_messages(posts, sent_posts):
+        if not delete_relay_message(message_id):
+            break
+        deleted += 1
+    return deleted
+
+
 def _relay_media(url):
     path = urlparse(url).path.lower()
     if "v.redd.it" in url or path.endswith(VIDEO_EXTENSIONS + (".m3u8", ".mpd")):
@@ -440,19 +481,20 @@ def fetch_relay_posts(subreddit_name, limit):
         if not messages:
             break
         for message in messages:
-            for item in parse_relay_message(message):
+            items = parse_relay_message(message)
+            message_post_ids = frozenset(relay_post_id(item) for item in items)
+            for item in items:
                 if str(item.get("subreddit", "")).lower() != wanted:
                     continue
-                post_id = str(item["postId"])
-                post_id = post_id[3:] if post_id.startswith("t3_") else post_id
-                if post_id in posts:
-                    continue
-                posts[post_id] = {
+                post_id = relay_post_id(item)
+                post = posts.setdefault(post_id, {
                     "id": post_id,
                     "title": f"r/{item['subreddit']} post {post_id}",
                     "permalink_full": f"https://www.reddit.com/comments/{post_id}",
                     "media": _relay_media(item["url"]),
-                }
+                    "relay_messages": {},
+                })
+                post["relay_messages"][message["id"]] = message_post_ids
         if len(posts) >= limit:
             break
         before = messages[-1]["id"]
@@ -732,10 +774,13 @@ def fetch_reddit():
                 failed_items.append(post.get("title") or post.get("id", "<unknown-post>"))
 
         save_sent_posts(sent_posts)
+        deleted_count = delete_finished_relay_messages(all_posts, sent_posts) if source == "relay" else 0
 
         msg = f"Successfully sent {sent_count} Reddit posts to Discord!"
         if skip_count:
             msg += f" ({skip_count} text/link posts skipped)"
+        if deleted_count:
+            msg += f" ({deleted_count} used relay message(s) deleted)"
         if failed_items:
             return jsonify({"status": "partial", "message": f"Sent {sent_count} posts. Failed: {', '.join(failed_items)}"})
         return jsonify({"status": "success", "message": msg})
