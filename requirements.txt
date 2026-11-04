@@ -2,3 +2,7 @@ flask
 flask-limiter
 requests
 python-dotenv
+
+# tests only
+responses
+pytest

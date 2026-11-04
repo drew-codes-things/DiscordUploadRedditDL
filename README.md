@@ -88,9 +88,9 @@ After a send, any relay message whose posts have all been sent (in this run or a
 
 The `/upload` endpoint accepts multi-file form posts and forwards each file to the Discord webhook as a direct attachment. Files are validated before sending:
 
-- Allowed extensions: `png`, `jpg`, `jpeg`, `gif`, `mp4`, `webm`, `avi`, `mov`, `mkv`
+- Allowed extensions: `png`, `jpg`, `jpeg`, `gif`, `webp`, `mp4`, `webm`, `avi`, `mov`, `mkv`
 - **Magic-byte check**: the file's actual contents must match a known image/video signature, not just the extension
-- Maximum file size: 25 MB per file (empty files are rejected)
+- Maximum file size: 25 MB per file (empty files are rejected); request bodies over that are refused with HTTP 413 before being read
 - The webhook URL must start with `https://discord.com/api/webhooks/`
 
 The browser UI guards empty/oversized files client-side and shows a **per-file progress bar** as each uploads. Uploads that fail for a temporary reason (network drop, rate limit, or a Discord/server error) are retried once automatically after a short pause; anything still failing gets a **Retry failed** button, while files rejected for their contents are not retried. The Reddit->Discord flow has a **Preview** step (`/preview_reddit`) that lists the posts that would be sent before you send them.

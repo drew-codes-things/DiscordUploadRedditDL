@@ -22,10 +22,6 @@ from werkzeug.utils import secure_filename
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-REDDIT_HEADERS = {
-    "User-Agent": "linux:discord-upload-reddit-v2:2.0 (by /u/drew-gnr)",
-    "Accept": "application/json",
-}
 REDDIT_RSS_HEADERS = {
     "User-Agent": "linux:discord-upload-reddit-v2:2.0 (by /u/drew-gnr)",
     "Accept": "application/rss+xml, application/xml, text/xml",
@@ -104,10 +100,11 @@ def setup_logging():
 logger = setup_logging()
 
 app = Flask(__name__, template_folder="website")
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES + 1024 * 1024
 
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "mp4", "webm", "avi", "mov", "mkv"}
-SENT_POSTS_FILE   = "./sent_posts.json"
-SENT_POSTS_BACKUP = "./sent_posts.json.bak"
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "mp4", "webm", "avi", "mov", "mkv"}
+SENT_POSTS_FILE   = os.path.join(BASE_DIR, "sent_posts.json")
+SENT_POSTS_BACKUP = os.path.join(BASE_DIR, "sent_posts.json.bak")
 
 limiter = Limiter(get_remote_address, app=app, default_limits=["100 per minute"])
 
@@ -571,10 +568,17 @@ def set_security_headers(resp):
     resp.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; img-src 'self' data: https:; "
-        "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
-        "connect-src 'self'",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "script-src 'self' 'unsafe-inline'; "
+        "connect-src 'self'; frame-ancestors 'none'",
     )
     return resp
+
+
+@app.errorhandler(413)
+def request_too_large(_error):
+    return jsonify({"error": f"Request too large. Each upload is limited to {MAX_UPLOAD_BYTES // (1024 * 1024)} MB."}), 413
 
 
 @app.route("/health")

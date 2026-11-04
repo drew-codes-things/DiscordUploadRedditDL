@@ -22,7 +22,7 @@
 
         <div class="section">
             <h2>Option 1: Upload Images / Videos</h2>
-            <input type="file" id="file-upload" multiple accept="image/*,video/*">
+            <input type="file" id="file-upload" multiple accept=".png,.jpg,.jpeg,.gif,.webp,.mp4,.webm,.avi,.mov,.mkv,image/*,video/*">
             <button onclick="uploadFiles()">Upload</button>
             <button id="retry-failed" type="button" onclick="retryFailedUploads()" hidden>Retry failed</button>
             <div id="upload-list"></div>
@@ -31,7 +31,7 @@
         <div class="section">
             <h2>Option 2: Fetch Reddit Posts</h2>
             <input type="text" id="subreddit-name" placeholder="Enter Subreddit Name (e.g. 'python')" required>
-            <input type="number" id="num-items" placeholder="Number of posts to fetch" required>
+            <input type="number" id="num-items" min="1" max="200" step="1" placeholder="Number of posts to fetch (1-200)" required>
             <select id="reddit-source" aria-label="Where to get posts from">
                 <option value="rss">Reddit RSS feed</option>
                 <option value="relay">Discord relay (RedditDownloaderV4's Devvit app)</option>
@@ -56,7 +56,12 @@
         }
 
         function escapeHtml(str) {
-            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
         }
 
         function uploadOne(webhookUrl, file, row) {
@@ -167,6 +172,7 @@
             const preview = document.getElementById('reddit-preview');
 
             if (!subredditName || !numItems) { setStatus('Enter a subreddit and number of posts', false); return; }
+            if (!(Number(numItems) >= 1 && Number(numItems) <= 200)) { setStatus('Number of posts must be between 1 and 200', false); return; }
 
             preview.innerHTML = '<p>Loading preview…</p>';
             const formData = new FormData();
@@ -199,6 +205,7 @@
                 setStatus('Please fill all required fields (webhook URL included)', false);
                 return;
             }
+            if (!(Number(numItems) >= 1 && Number(numItems) <= 200)) { setStatus('Number of posts must be between 1 and 200', false); return; }
 
             const formData = new FormData();
             formData.append('webhook_url', webhookUrl);
