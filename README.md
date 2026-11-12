@@ -34,7 +34,7 @@ Subreddit input -> RSS/Atom fetch -> media resolution -> webhook embed -> sent_p
 3. Each entry's `<content>` HTML is unescaped and scanned for image and video URLs
 4. `preview.redd.it` URLs are rewritten to `i.redd.it` for full-resolution originals
 5. Posts without any resolvable media (text and link posts) are skipped automatically
-6. Each sent post ID is recorded in `sent_posts.json` with a timestamp; entries older than 7 days are pruned on the next run
+6. Each sent post ID is recorded in `sent_posts.json` together with the webhook's ID (never its token) and a timestamp, so a post sent to one channel can still be sent to another; entries older than 7 days are pruned on the next run
 
 ---
 

@@ -475,8 +475,9 @@ def finished_relay_messages(posts, sent_posts):
     messages = {}
     for post in posts:
         messages.update(post.get("relay_messages", {}))
+    sent_anywhere = posts_sent_anywhere(sent_posts)
     return [message_id for message_id, post_ids in messages.items()
-            if post_ids and all(post_id in sent_posts for post_id in post_ids)]
+            if post_ids and all(post_id in sent_anywhere for post_id in post_ids)]
 
 
 def delete_finished_relay_messages(posts, sent_posts):
@@ -548,6 +549,39 @@ def post_media(post):
 
 def sent_post_key(post):
     return post.get("id") or post.get("permalink_path") or post.get("permalink_full")
+
+
+SENT_RECORD_SEPARATOR = " "
+
+
+def webhook_id_from_url(webhook_url):
+    segments = urlsplit(webhook_url).path.split("/")
+    if "webhooks" not in segments:
+        return ""
+    after = segments[segments.index("webhooks") + 1:]
+    return after[0] if after else ""
+
+
+def sent_record_key(webhook_id, post):
+    post_key = sent_post_key(post)
+    if not post_key:
+        return None
+    return f"{webhook_id}{SENT_RECORD_SEPARATOR}{post_key}" if webhook_id else post_key
+
+
+def was_sent(post, sent_posts, webhook_id=""):
+    post_key = sent_post_key(post)
+    if not post_key:
+        return False
+    if post_key in sent_posts:
+        return True
+    if webhook_id:
+        return sent_record_key(webhook_id, post) in sent_posts
+    return post_key in posts_sent_anywhere(sent_posts)
+
+
+def posts_sent_anywhere(sent_posts):
+    return {key.split(SENT_RECORD_SEPARATOR, 1)[-1] for key in sent_posts}
 
 
 def load_sent_posts():
@@ -749,10 +783,12 @@ def preview_reddit():
     if source == "relay" and not relay_configured():
         return jsonify({"status": "error", "message": "Set RELAY_BOT_TOKEN and RELAY_CHANNEL_ID in .env to use the Discord relay"}), 400
 
+    webhook_id = webhook_id_from_url(request.form.get("webhook_url", "").strip())
+
     try:
         sent_posts = load_sent_posts()
         all_posts = load_reddit_posts(source, subreddit_name, num_items * 3)
-        unsent = [p for p in all_posts if sent_post_key(p) not in sent_posts]
+        unsent = [p for p in all_posts if not was_sent(p, sent_posts, webhook_id)]
         preview = []
         for post in unsent:
             if len(preview) >= num_items:
@@ -809,8 +845,9 @@ def fetch_reddit():
         skip_count  = 0
         failed_items = []
 
+        webhook_id = webhook_id_from_url(webhook_url)
         all_posts = load_reddit_posts(source, subreddit_name, num_items * 3)
-        unsent    = [p for p in all_posts if sent_post_key(p) not in sent_posts]
+        unsent    = [p for p in all_posts if not was_sent(p, sent_posts, webhook_id)]
 
         for post in unsent:
             if sent_count >= num_items:
@@ -842,9 +879,9 @@ def fetch_reddit():
             try:
                 response = post_to_webhook(webhook_url, json={"embeds": [embed]})
                 if response.status_code == 204:
-                    post_key = sent_post_key(post)
-                    if post_key:
-                        sent_posts[post_key] = datetime.now().isoformat()
+                    record_key = sent_record_key(webhook_id, post)
+                    if record_key:
+                        sent_posts[record_key] = datetime.now().isoformat()
                     sent_count += 1
                     time.sleep(WEBHOOK_POST_DELAY)
                 else:

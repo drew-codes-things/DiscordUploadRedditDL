@@ -193,6 +193,7 @@
             formData.append('subreddit_name', subredditName);
             formData.append('num_items', numItems);
             formData.append('source', document.getElementById('reddit-source').value);
+            formData.append('webhook_url', document.getElementById('webhook-url').value);
 
             fetch('/preview_reddit', { method: 'POST', body: formData, headers: appTokenHeaders() })
                 .then(r => r.json())
