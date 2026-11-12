@@ -123,11 +123,23 @@ Requires: `flask`, `flask-limiter`, `requests`, `python-dotenv`, `werkzeug`
 python backend.py
 ```
 
-The server starts on `http://0.0.0.0:1432`. Open `http://localhost:1432` in your browser to access the UI.
+The server listens on `127.0.0.1:1432`, so only this machine can reach it. Open `http://localhost:1432` in your browser to access the UI.
+
+### 3. Access settings (`.env`)
+
+| Key | Default | Description |
+|---|---|---|
+| `BIND_HOST` | `127.0.0.1` | Address to listen on. Use `0.0.0.0` only to reach the app from other machines; `APP_TOKEN` is then required or the app refuses to start. |
+| `ALLOWED_HOSTS` | `localhost`, `127.0.0.1`, `::1` and `BIND_HOST` | Comma-separated extra host names the browser may use, e.g. the LAN IP or a proxy's domain. Requests for any other `Host` are refused, which blocks DNS-rebinding pages. |
+| `APP_TOKEN` | a random token per start | Shared secret every `POST` must send in the `X-App-Token` header. When unset, the page served on this machine carries the per-start token, so local use needs no setup. When set, the page never contains it and asks for it instead. |
+
+Every `POST` (`/upload`, `/preview_reddit`, `/fetch_reddit`) is refused with HTTP 403 when the token is missing or wrong, or when the browser's `Origin` is not this app's own address, so other web pages cannot drive it. `GET /` and `/health` stay open. If you put the app behind a reverse proxy, set `APP_TOKEN` and add the proxy's host name to `ALLOWED_HOSTS`.
 
 ---
 
 ## API Reference
+
+Every `POST` needs the `X-App-Token` header (see Access settings).
 
 ### `POST /upload`
 

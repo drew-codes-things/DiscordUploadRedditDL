@@ -7,6 +7,7 @@ import backend
 
 WEBHOOK = "https://discord.com/api/webhooks/1/abc"
 FORM = {"webhook_url": WEBHOOK, "subreddit_name": "pics", "num_items": "5"}
+AUTH = {backend.APP_TOKEN_HEADER: backend.APP_TOKEN}
 
 
 def media_post(post_id, title, permalink_path="/r/pics/comments/abc/title/"):
@@ -30,7 +31,7 @@ def test_titles_longer_than_discord_allows_are_shortened(monkeypatch):
     monkeypatch.setattr(backend, "load_sent_posts", lambda: {})
     monkeypatch.setattr(backend, "load_reddit_posts", lambda source, name, limit: [media_post("abc", "t" * 300)])
     responses.post(WEBHOOK, status=204)
-    reply = backend.app.test_client().post("/fetch_reddit", data=FORM)
+    reply = backend.app.test_client().post("/fetch_reddit", data=FORM, headers=AUTH)
     assert reply.get_json()["status"] == "success"
     sent_title = json.loads(responses.calls[0].request.body)["embeds"][0]["title"]
     assert len(sent_title) == backend.DISCORD_EMBED_TITLE_LIMIT
@@ -42,5 +43,5 @@ def test_a_post_without_an_id_is_not_sent_twice(monkeypatch):
     monkeypatch.setattr(backend, "load_sent_posts", lambda: {"/r/pics/s/shortlink": "2026-01-01T00:00:00"})
     monkeypatch.setattr(backend, "load_reddit_posts", lambda source, name, limit: [post])
     responses.post(WEBHOOK, status=204)
-    backend.app.test_client().post("/fetch_reddit", data=FORM)
+    backend.app.test_client().post("/fetch_reddit", data=FORM, headers=AUTH)
     assert len(responses.calls) == 0

@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="app-token" content="{{ page_token }}">
     <title>Drew's Discord upload/reddit tool</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
@@ -13,6 +14,13 @@
         <h1>Upload Images/Videos or Send Reddit Posts to Discord Webhook</h1>
     </header>
     <div class="container">
+
+        {% if not page_token %}
+        <div class="section">
+            <h2>App token</h2>
+            <input type="password" id="app-token" placeholder="APP_TOKEN from the server's .env" autocomplete="current-password" required>
+        </div>
+        {% endif %}
 
         <div class="section">
             <h2>Requirement: Enter the Webhook URL</h2>
@@ -47,6 +55,12 @@
         const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
         const AUTO_RETRY_DELAY_MS = 2000;
         let failedUploads = [];
+        const PAGE_APP_TOKEN = document.querySelector('meta[name="app-token"]').content;
+
+        function appTokenHeaders() {
+            const field = document.getElementById('app-token');
+            return { 'X-App-Token': PAGE_APP_TOKEN || (field ? field.value.trim() : '') };
+        }
 
         function setStatus(msg, ok) {
             const s = document.getElementById('status-message');
@@ -75,6 +89,7 @@
 
                 const xhr = new XMLHttpRequest();
                 xhr.open('POST', '/upload');
+                Object.entries(appTokenHeaders()).forEach(([name, value]) => xhr.setRequestHeader(name, value));
                 xhr.upload.onprogress = e => {
                     if (e.lengthComputable) bar.style.width = Math.round((e.loaded / e.total) * 100) + '%';
                 };
@@ -179,7 +194,7 @@
             formData.append('num_items', numItems);
             formData.append('source', document.getElementById('reddit-source').value);
 
-            fetch('/preview_reddit', { method: 'POST', body: formData })
+            fetch('/preview_reddit', { method: 'POST', body: formData, headers: appTokenHeaders() })
                 .then(r => r.json())
                 .then(data => {
                     if (data.status !== 'success') { preview.innerHTML = ''; setStatus(data.message || 'Preview failed', false); return; }
@@ -213,7 +228,7 @@
             formData.append('source', document.getElementById('reddit-source').value);
 
             setStatus('Sending…', true);
-            fetch('/fetch_reddit', { method: 'POST', body: formData })
+            fetch('/fetch_reddit', { method: 'POST', body: formData, headers: appTokenHeaders() })
                 .then(response => response.json())
                 .then(data => {
                     setStatus(data.message, data.status === 'success');

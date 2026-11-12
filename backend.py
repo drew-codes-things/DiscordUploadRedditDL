@@ -1,15 +1,17 @@
+import hmac
 import html
 import io
 import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import sys
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, urlsplit
 
 import requests
 from dotenv import load_dotenv
@@ -44,6 +46,41 @@ RELAY_MESSAGE_PREFIX = "RELAY:"
 RELAY_MAX_PAGES = 5
 DELETE_RELAY_MESSAGES = (os.getenv("DELETE_RELAY_MESSAGES") or "true").strip().lower() != "false"
 DISCORD_API_BASE = "https://discord.com/api/v10"
+
+APP_PORT = 1432
+DEFAULT_BIND_HOST = "127.0.0.1"
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+WILDCARD_BIND_HOSTS = frozenset({"0.0.0.0", "::", ""})
+APP_TOKEN_HEADER = "X-App-Token"
+
+
+def bind_host_from_env():
+    return (os.getenv("BIND_HOST") or DEFAULT_BIND_HOST).strip()
+
+
+def bare_host(host):
+    return host.strip().strip("[]").lower()
+
+
+def parse_allowed_hosts(raw_hosts, bind_host):
+    hosts = set(LOOPBACK_HOSTS)
+    hosts.update(bare_host(entry) for entry in (raw_hosts or "").split(",") if entry.strip())
+    if bare_host(bind_host) not in WILDCARD_BIND_HOSTS:
+        hosts.add(bare_host(bind_host))
+    return frozenset(hosts)
+
+
+def check_startup_settings(bind_host, configured_token):
+    if bare_host(bind_host) not in LOOPBACK_HOSTS and not configured_token:
+        raise RuntimeError(
+            f"BIND_HOST={bind_host} lets other machines reach this app; set APP_TOKEN in .env before binding beyond loopback"
+        )
+
+
+BIND_HOST = bind_host_from_env()
+CONFIGURED_APP_TOKEN = (os.getenv("APP_TOKEN") or "").strip()
+APP_TOKEN = CONFIGURED_APP_TOKEN or secrets.token_urlsafe(32)
+ALLOWED_HOSTS = parse_allowed_hosts(os.getenv("ALLOWED_HOSTS"), BIND_HOST)
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 VIDEO_EXTENSIONS = (".mp4", ".webm", ".mov", ".mkv", ".avi")
@@ -558,6 +595,38 @@ def save_sent_posts(sent_posts):
             pass
 
 
+def access_refused(message):
+    return jsonify({"status": "error", "message": message, "error": message}), 403
+
+
+def request_hostname():
+    return bare_host(urlsplit(f"//{request.host}").hostname or "")
+
+
+def is_same_origin(origin):
+    parts = urlsplit(origin)
+    return parts.scheme in ("http", "https") and parts.netloc.lower() == request.host.lower()
+
+
+def has_app_token():
+    supplied = request.headers.get(APP_TOKEN_HEADER, "")
+    return hmac.compare_digest(supplied.encode(), APP_TOKEN.encode())
+
+
+@app.before_request
+def guard_request():
+    if request_hostname() not in ALLOWED_HOSTS:
+        return access_refused("This host name is not allowed. Add it to ALLOWED_HOSTS in .env.")
+    if request.method != "POST":
+        return None
+    origin = request.headers.get("Origin")
+    if origin is not None and not is_same_origin(origin):
+        return access_refused("Cross-site requests are refused.")
+    if not has_app_token():
+        return access_refused("Missing or wrong app token.")
+    return None
+
+
 @app.after_request
 def log_request(resp):
     if os.getenv("LOG_JSON", "false").lower() == "true" and request.path != "/health":
@@ -593,7 +662,8 @@ def health():
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    page_token = "" if CONFIGURED_APP_TOKEN else APP_TOKEN
+    return render_template("index.html", page_token=page_token)
 
 
 @app.route("/upload", methods=["POST"])
@@ -802,9 +872,10 @@ def fetch_reddit():
 if __name__ == "__main__":
     logger.info("NOTE: Coded by Drew")
     logger.info("Ready")
-    logger.info("WEBSITE: http://localhost:1432 or http://127.0.0.1:1432")
+    check_startup_settings(BIND_HOST, CONFIGURED_APP_TOKEN)
+    logger.info(f"WEBSITE: listening on {BIND_HOST}:{APP_PORT}, open http://localhost:{APP_PORT}")
     try:
-        app.run(host="0.0.0.0", port=1432, debug=False)
+        app.run(host=BIND_HOST, port=APP_PORT, debug=False)
     except KeyboardInterrupt:
         logger.info("Shutting down")
         sys.exit(0)

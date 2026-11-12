@@ -76,6 +76,7 @@ def test_fetch_reddit_deletes_used_relay_messages(monkeypatch, tmp_path):
     responses.delete(f"{MESSAGES_URL}/5", status=204)
     client = backend.app.test_client()
     reply = client.post("/fetch_reddit", data={"webhook_url": "https://discord.com/api/webhooks/1/abc",
-                                               "subreddit_name": "pics", "num_items": "5", "source": "relay"})
+                                               "subreddit_name": "pics", "num_items": "5", "source": "relay"},
+                        headers={backend.APP_TOKEN_HEADER: backend.APP_TOKEN})
     assert reply.get_json()["status"] == "success"
     assert "1 used relay message(s) deleted" in reply.get_json()["message"]
