@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Drew's Discord upload/reddit tool</title>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
 </head>
@@ -24,7 +23,7 @@
             <h2>Option 1: Upload Images / Videos</h2>
             <input type="file" id="file-upload" multiple accept=".png,.jpg,.jpeg,.gif,.webp,.mp4,.webm,.avi,.mov,.mkv,image/*,video/*">
             <button onclick="uploadFiles()">Upload</button>
-            <button id="retry-failed" type="button" onclick="retryFailedUploads()" hidden>Retry failed</button>
+            <button id="retry-failed" class="secondary" type="button" onclick="retryFailedUploads()" hidden>Retry failed</button>
             <div id="upload-list"></div>
         </div>
 
@@ -36,7 +35,7 @@
                 <option value="rss">Reddit RSS feed</option>
                 <option value="relay">Discord relay (RedditDownloaderV4's Devvit app)</option>
             </select>
-            <button onclick="previewRedditPosts()">Preview</button>
+            <button class="secondary" onclick="previewRedditPosts()">Preview</button>
             <button onclick="fetchRedditPosts()">Fetch and Send Reddit Posts</button>
             <div id="reddit-preview"></div>
         </div>
@@ -52,7 +51,7 @@
         function setStatus(msg, ok) {
             const s = document.getElementById('status-message');
             s.textContent = msg;
-            s.style.color = ok ? '#4ade80' : '#e5383b';
+            s.style.color = ok ? 'var(--ok)' : 'var(--accent-text)';
         }
 
         function escapeHtml(str) {
@@ -86,13 +85,13 @@
                     const reason = (data.failed_files && data.failed_files[0]) || '';
                     const rejected = xhr.status === 200 && reason.includes('(');
                     bar.style.width = '100%';
-                    bar.style.background = ok ? '#4ade80' : '#e5383b';
+                    bar.style.background = ok ? 'var(--ok)' : 'var(--accent-text)';
                     state.textContent = ok ? 'done' : rejected ? reason : data.error || (xhr.status === 200 ? "failed - Discord didn't accept it" : `failed (HTTP ${xhr.status})`);
                     resolve({ ok, retryable: !ok && !rejected && xhr.status !== 400 });
                 };
                 xhr.onerror = () => {
                     state.textContent = 'failed (network)';
-                    bar.style.background = '#e5383b';
+                    bar.style.background = 'var(--accent-text)';
                     resolve({ ok: false, retryable: true });
                 };
                 xhr.send(formData);
