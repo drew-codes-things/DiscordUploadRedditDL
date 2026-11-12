@@ -35,6 +35,7 @@ REDDIT_RETRY_BACKOFF_SECONDS = 1.0
 WEBHOOK_POST_DELAY   = 0.5
 WEBHOOK_POST_TIMEOUT = 15
 WEBHOOK_MAX_RETRY_WAIT = 30
+DISCORD_EMBED_TITLE_LIMIT = 256
 
 RELAY_BOT_TOKEN = (os.getenv("RELAY_BOT_TOKEN") or "").strip()
 RELAY_CHANNEL_ID = (os.getenv("RELAY_CHANNEL_ID") or "").strip()
@@ -508,6 +509,10 @@ def post_media(post):
     return post["media"] if "media" in post else resolve_rss_post_media(post)
 
 
+def sent_post_key(post):
+    return post.get("id") or post.get("permalink_path") or post.get("permalink_full")
+
+
 def load_sent_posts():
     if not os.path.exists(SENT_POSTS_FILE):
         return {}
@@ -677,7 +682,7 @@ def preview_reddit():
     try:
         sent_posts = load_sent_posts()
         all_posts = load_reddit_posts(source, subreddit_name, num_items * 3)
-        unsent = [p for p in all_posts if p.get("id") not in sent_posts]
+        unsent = [p for p in all_posts if sent_post_key(p) not in sent_posts]
         preview = []
         for post in unsent:
             if len(preview) >= num_items:
@@ -735,7 +740,7 @@ def fetch_reddit():
         failed_items = []
 
         all_posts = load_reddit_posts(source, subreddit_name, num_items * 3)
-        unsent    = [p for p in all_posts if p.get("id") not in sent_posts]
+        unsent    = [p for p in all_posts if sent_post_key(p) not in sent_posts]
 
         for post in unsent:
             if sent_count >= num_items:
@@ -754,7 +759,7 @@ def fetch_reddit():
             description = f"[View Post]({view_link})" if view_link else ""
 
             embed = {
-                "title":       post.get("title", ""),
+                "title":       post.get("title", "")[:DISCORD_EMBED_TITLE_LIMIT],
                 "color":       0x40E0D0,
                 "description": description,
             }
@@ -767,7 +772,7 @@ def fetch_reddit():
             try:
                 response = post_to_webhook(webhook_url, json={"embeds": [embed]})
                 if response.status_code == 204:
-                    post_key = post.get("id") or post.get("permalink_path") or post.get("permalink_full")
+                    post_key = sent_post_key(post)
                     if post_key:
                         sent_posts[post_key] = datetime.now().isoformat()
                     sent_count += 1
