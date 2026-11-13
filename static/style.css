@@ -193,3 +193,8 @@ button[hidden] { display: none; }
     #webhook-url, #subreddit-name, #num-items, #reddit-source { font-size: 16px; height: var(--touch); }
     button, #file-upload::file-selector-button { height: var(--touch); }
 }
+
+@media (max-width: 820px), (pointer: coarse) {
+    #webhook-url, #subreddit-name, #num-items, #reddit-source { font-size: 16px; }
+    #webhook-url, #file-upload, #subreddit-name, #num-items, #reddit-source { min-height: 44px; }
+}
