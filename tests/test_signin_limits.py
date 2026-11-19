@@ -577,3 +577,63 @@ def test_the_password_hash_uses_the_full_scrypt_cost():
     expected = hashlib.scrypt(PASSWORD.encode(), salt=base64.b64decode(salt), n=2 ** 14, r=8, p=1, dklen=32)
     assert scheme == "scrypt"
     assert base64.b64decode(digest) == expected
+
+
+OPAQUE_ORIGIN = {"Origin": "null"}
+SAME_ORIGIN_FORM_FROM_A_NO_REFERRER_PAGE = {"Origin": "null", "Sec-Fetch-Site": "same-origin"}
+FORM_FIELDS = {"user": OWNER_NAME, "password": PASSWORD}
+
+
+def sign_in_pages(tmp_path, clock):
+    auth = new_auth(tmp_path, clock)
+    app = Flask(__name__)
+    signin.add_sign_in_pages(app, auth, "Test")
+    return auth, app.test_client()
+
+
+def sets_a_session(response):
+    return any(value.startswith(COOKIE + "=") for value in response.headers.getlist("Set-Cookie"))
+
+
+def test_a_same_origin_setup_form_from_a_no_referrer_page_makes_the_owner(tmp_path, clock):
+    auth, browser = sign_in_pages(tmp_path, clock)
+    form = dict(FORM_FIELDS, code=auth.setup_code(), confirm=PASSWORD)
+    made = browser.post("/setup", data=form, headers=SAME_ORIGIN_FORM_FROM_A_NO_REFERRER_PAGE)
+    assert made.status_code == 303
+    assert sets_a_session(made)
+    assert not auth.needs_setup()
+
+
+def test_same_origin_sign_in_and_out_forms_from_a_no_referrer_page_work(tmp_path, clock):
+    auth, browser = sign_in_pages(tmp_path, clock)
+    set_up(auth)
+    signed_in = browser.post("/signin", data=FORM_FIELDS, headers=SAME_ORIGIN_FORM_FROM_A_NO_REFERRER_PAGE)
+    assert signed_in.status_code == 303
+    assert sets_a_session(signed_in)
+    signed_out = browser.post("/signout", headers=SAME_ORIGIN_FORM_FROM_A_NO_REFERRER_PAGE)
+    assert signed_out.status_code == 303
+    assert signed_out.headers["Location"].endswith("/signin")
+
+
+@pytest.mark.parametrize("fetch_site", [None, "cross-site", "same-site", "none", "Same-Origin"])
+def test_an_opaque_origin_not_marked_same_origin_is_refused(tmp_path, clock, fetch_site):
+    auth, browser = sign_in_pages(tmp_path, clock)
+    headers = dict(OPAQUE_ORIGIN) if fetch_site is None else dict(OPAQUE_ORIGIN, **{"Sec-Fetch-Site": fetch_site})
+    form = dict(FORM_FIELDS, code=auth.setup_code(), confirm=PASSWORD)
+    refused_setup = browser.post("/setup", data=form, headers=headers)
+    assert refused_setup.status_code == 403
+    assert auth.needs_setup()
+    set_up(auth)
+    refused_sign_in = browser.post("/signin", data=FORM_FIELDS, headers=headers)
+    assert refused_sign_in.status_code == 403
+    assert not sets_a_session(refused_sign_in)
+    assert browser.post("/signout", headers=headers).status_code == 403
+
+
+def test_a_foreign_origin_is_refused_even_when_marked_same_origin(tmp_path, clock):
+    auth, browser = sign_in_pages(tmp_path, clock)
+    set_up(auth)
+    headers = {"Origin": "https://evil.example", "Sec-Fetch-Site": "same-origin"}
+    refused = browser.post("/signin", data=FORM_FIELDS, headers=headers)
+    assert refused.status_code == 403
+    assert not sets_a_session(refused)

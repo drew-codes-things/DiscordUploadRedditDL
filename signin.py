@@ -57,6 +57,9 @@ DEVICE_PURPOSE = b"owner device\x00"
 DEVICE_KEY_SEPARATOR = b"\x00"
 DEVICE_COOKIE_SUFFIX = "_device"
 FORWARDED_FOR_HEADER = "X-Forwarded-For"
+OPAQUE_ORIGIN = "null"
+FETCH_SITE_HEADER = "Sec-Fetch-Site"
+SAME_ORIGIN_FETCH_SITE = "same-origin"
 LOOPBACK_HOST_NAMES = ("localhost", "127.0.0.1", "::1")
 LOOPBACK_DOMAIN_SUFFIX = ".localhost"
 LOCAL_NETWORK_SUFFIX = ".local"
@@ -543,6 +546,8 @@ def _is_same_origin() -> bool:
     origin = request.headers.get("Origin")
     if origin is None:
         return True
+    if origin == OPAQUE_ORIGIN:
+        return request.headers.get(FETCH_SITE_HEADER) == SAME_ORIGIN_FETCH_SITE
     return urlsplit(origin).netloc == request.host
 
 
