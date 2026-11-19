@@ -18,6 +18,7 @@ MEDIA_POST = {
 def app_settings(monkeypatch):
     monkeypatch.setattr(backend, "APP_TOKEN", TOKEN)
     monkeypatch.setattr(backend, "CONFIGURED_APP_TOKEN", "")
+    monkeypatch.setattr(backend, "ALLOW_INSECURE", True)
     monkeypatch.setattr(backend, "ALLOWED_HOSTS", backend.parse_allowed_hosts("", "127.0.0.1"))
     monkeypatch.setattr(backend, "save_sent_posts", lambda posts: None)
     monkeypatch.setattr(backend, "load_sent_posts", lambda: {})
@@ -105,11 +106,11 @@ def test_default_bind_is_loopback(monkeypatch):
     assert backend.bind_host_from_env() == "0.0.0.0"
 
 
-def test_wide_bind_without_a_configured_token_refuses_to_start():
+def test_wide_bind_without_a_sign_in_or_token_refuses_to_start():
     with pytest.raises(RuntimeError, match="APP_TOKEN"):
-        backend.check_startup_settings("0.0.0.0", "")
-    backend.check_startup_settings("0.0.0.0", "set")
-    backend.check_startup_settings("127.0.0.1", "")
+        backend.check_startup_settings("0.0.0.0", "none")
+    backend.check_startup_settings("0.0.0.0", "token")
+    backend.check_startup_settings("127.0.0.1", "none")
 
 
 def test_allowed_hosts_include_loopback_the_bind_address_and_extras():

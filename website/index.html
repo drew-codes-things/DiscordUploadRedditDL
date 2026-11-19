@@ -12,6 +12,7 @@
     <header class="topbar">
         <img src="{{ url_for('static', filename='logo.svg') }}" alt="Logo" class="topbar-logo">
         <h1>Upload Images/Videos or Send Reddit Posts to Discord Webhook</h1>
+        {% if can_sign_out %}<a class="topbar-signout" href="/signout">Sign out</a>{% endif %}
     </header>
     <div class="container">
 

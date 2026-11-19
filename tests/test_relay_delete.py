@@ -70,6 +70,7 @@ def test_fetch_reddit_deletes_used_relay_messages(monkeypatch, tmp_path):
     monkeypatch.setattr(backend, "load_sent_posts", lambda: {})
     monkeypatch.setattr(backend, "save_sent_posts", lambda posts: None)
     monkeypatch.setattr(backend, "WEBHOOK_POST_DELAY", 0)
+    monkeypatch.setattr(backend, "ALLOW_INSECURE", True)
     responses.get(MESSAGES_URL, json=[relay_message("5", [item("x"), item("y")])])
     responses.get(MESSAGES_URL, json=[])
     responses.post("https://discord.com/api/webhooks/1/abc", status=204)
