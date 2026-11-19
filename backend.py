@@ -86,6 +86,8 @@ def check_startup_settings(bind_host, method):
             f"BIND_HOST={bind_host} lets other machines reach this app; with ALLOW_INSECURE=true set APP_TOKEN in .env "
             "before binding beyond loopback, or leave ALLOW_INSECURE off to use the own sign-in"
         )
+    if method == "none":
+        logger.warning("ALLOW_INSECURE=true: no sign-in, anyone on this machine can post through this app")
 
 
 BIND_HOST = bind_host_from_env()
