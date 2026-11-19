@@ -23,6 +23,7 @@ def store(monkeypatch):
     monkeypatch.setattr(backend, "load_sent_posts", lambda: dict(saved))
     monkeypatch.setattr(backend, "save_sent_posts", lambda posts: saved.update(posts))
     monkeypatch.setattr(backend, "WEBHOOK_POST_DELAY", 0)
+    monkeypatch.setattr(backend, "ALLOW_INSECURE", True)
     monkeypatch.setattr(backend, "load_reddit_posts", lambda source, name, limit: [media_post("abc")])
     return saved
 

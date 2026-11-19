@@ -1,6 +1,8 @@
+import contextlib
 import hmac
 import html
 import io
+import ipaddress
 import json
 import logging
 import os
@@ -8,6 +10,7 @@ import re
 import secrets
 import shutil
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -15,11 +18,13 @@ from urllib.parse import quote, urlparse, urlsplit
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, abort, jsonify, redirect, render_template, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from requests.exceptions import RequestException
 from werkzeug.utils import secure_filename
+
+from signin import SIGN_IN_PATHS, OwnerAccount, PasswordAuth, add_sign_in_pages
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
@@ -52,6 +57,11 @@ DEFAULT_BIND_HOST = "127.0.0.1"
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 WILDCARD_BIND_HOSTS = frozenset({"0.0.0.0", "::", ""})
 APP_TOKEN_HEADER = "X-App-Token"
+SECURE_COOKIE_CHOICES = ("auto", "true", "false")
+OWN_SESSION_COOKIE = "discordupload_session"
+OWNER_FILE_NAME = "owner.json"
+SECRET_FILE_NAME = "secret_key"
+SECRET_BYTES = 32
 
 
 def bind_host_from_env():
@@ -70,10 +80,11 @@ def parse_allowed_hosts(raw_hosts, bind_host):
     return frozenset(hosts)
 
 
-def check_startup_settings(bind_host, configured_token):
-    if bare_host(bind_host) not in LOOPBACK_HOSTS and not configured_token:
+def check_startup_settings(bind_host, method):
+    if bare_host(bind_host) not in LOOPBACK_HOSTS and method == "none":
         raise RuntimeError(
-            f"BIND_HOST={bind_host} lets other machines reach this app; set APP_TOKEN in .env before binding beyond loopback"
+            f"BIND_HOST={bind_host} lets other machines reach this app; with ALLOW_INSECURE=true set APP_TOKEN in .env "
+            "before binding beyond loopback, or leave ALLOW_INSECURE off to use the own sign-in"
         )
 
 
@@ -81,6 +92,88 @@ BIND_HOST = bind_host_from_env()
 CONFIGURED_APP_TOKEN = (os.getenv("APP_TOKEN") or "").strip()
 APP_TOKEN = CONFIGURED_APP_TOKEN or secrets.token_urlsafe(32)
 ALLOWED_HOSTS = parse_allowed_hosts(os.getenv("ALLOWED_HOSTS"), BIND_HOST)
+ALLOW_INSECURE = (os.getenv("ALLOW_INSECURE") or "false").strip().lower() == "true"
+
+
+def sign_in_method():
+    if CONFIGURED_APP_TOKEN:
+        return "token"
+    if ALLOW_INSECURE:
+        return "none"
+    return "builtin"
+
+
+def read_secure_cookies():
+    choice = (os.getenv("SECURE_COOKIES") or "auto").strip().lower()
+    if choice not in SECURE_COOKIE_CHOICES:
+        raise SystemExit(f"SECURE_COOKIES must be one of {', '.join(SECURE_COOKIE_CHOICES)}, got {choice!r}")
+    return choice
+
+
+def read_list(name):
+    return tuple(part.strip() for part in (os.getenv(name) or "").split(",") if part.strip())
+
+
+def has_host_bits(entry):
+    try:
+        ipaddress.ip_network(entry, strict=True)
+    except ValueError:
+        return True
+    return False
+
+
+def read_trusted_proxies():
+    if sign_in_method() != "builtin":
+        return ()
+    entries = read_list("TRUSTED_PROXIES")
+    for entry in entries:
+        try:
+            network = ipaddress.ip_network(entry, strict=False)
+        except ValueError as error:
+            raise SystemExit(f"TRUSTED_PROXIES has {entry!r}, which is not an address or network") from error
+        if has_host_bits(entry):
+            raise SystemExit(f"TRUSTED_PROXIES has {entry!r}, which has host bits set; write {network} for the network "
+                             f"or {entry.split('/')[0]} for one address")
+        if network.num_addresses > 1 and not network.is_private:
+            raise SystemExit(f"TRUSTED_PROXIES has {entry!r}, which reaches public addresses; list the proxy's own address "
+                             "or a private network")
+    return entries
+
+
+def usable_secret(secret, source):
+    if len(secret) < SECRET_BYTES:
+        raise SystemExit(f"{source} holds {len(secret)} bytes, fewer than the {SECRET_BYTES} the sign-in key needs; "
+                         "set a longer SECRET_KEY, or stop the app, delete the secret_key file and start it again")
+    return secret
+
+
+def save_secret_file_unless_present(path):
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=".secret-", dir=folder)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(secrets.token_hex(SECRET_BYTES).encode())
+        with contextlib.suppress(FileExistsError):
+            os.link(temporary, path)
+    finally:
+        os.unlink(temporary)
+
+
+def load_or_create_secret_file(path):
+    if not os.path.exists(path):
+        save_secret_file_unless_present(path)
+    with open(path, "rb") as handle:
+        return usable_secret(handle.read(), path)
+
+
+def sign_in_secret():
+    if sign_in_method() != "builtin":
+        return secrets.token_hex(SECRET_BYTES).encode()
+    configured = (os.getenv("SECRET_KEY") or "").strip()
+    if configured:
+        return usable_secret(configured.encode(), "SECRET_KEY")
+    return load_or_create_secret_file(os.path.join(BASE_DIR, SECRET_FILE_NAME))
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 VIDEO_EXTENSIONS = (".mp4", ".webm", ".mov", ".mkv", ".avi")
@@ -145,6 +238,11 @@ SENT_POSTS_FILE   = os.path.join(BASE_DIR, "sent_posts.json")
 SENT_POSTS_BACKUP = os.path.join(BASE_DIR, "sent_posts.json.bak")
 
 limiter = Limiter(get_remote_address, app=app, default_limits=["100 per minute"])
+
+OWN_SIGN_IN = PasswordAuth(OwnerAccount(os.path.join(BASE_DIR, OWNER_FILE_NAME)), sign_in_secret(),
+                           OWN_SESSION_COOKIE, read_secure_cookies(), ALLOWED_HOSTS,
+                           trusted_proxies=read_trusted_proxies())
+add_sign_in_pages(app, OWN_SIGN_IN, "Discord Upload")
 
 
 def allowed_file(filename):
@@ -647,10 +745,25 @@ def has_app_token():
     return hmac.compare_digest(supplied.encode(), APP_TOKEN.encode())
 
 
+def is_signed_in():
+    return OWN_SIGN_IN.user_for(request.remote_addr or "", request.headers) is not None
+
+
+def refuse_signed_out_visitor():
+    if request.method == "GET" and request.path == "/":
+        return redirect(OWN_SIGN_IN.entry_path(), code=303)
+    return jsonify({"status": "error", "message": "Sign in first.", "error": "Sign in first."}), 401
+
+
 @app.before_request
 def guard_request():
     if request_hostname() not in ALLOWED_HOSTS:
         return access_refused("This host name is not allowed. Add it to ALLOWED_HOSTS in .env.")
+    builtin = sign_in_method() == "builtin"
+    if request.path in SIGN_IN_PATHS:
+        return None if builtin else abort(404)
+    if builtin and request.path != "/health" and not is_signed_in():
+        return refuse_signed_out_visitor()
     if request.method != "POST":
         return None
     origin = request.headers.get("Origin")
@@ -697,7 +810,7 @@ def health():
 @app.route("/")
 def index():
     page_token = "" if CONFIGURED_APP_TOKEN else APP_TOKEN
-    return render_template("index.html", page_token=page_token)
+    return render_template("index.html", page_token=page_token, can_sign_out=sign_in_method() == "builtin")
 
 
 @app.route("/upload", methods=["POST"])
@@ -909,7 +1022,10 @@ def fetch_reddit():
 if __name__ == "__main__":
     logger.info("NOTE: Coded by Drew")
     logger.info("Ready")
-    check_startup_settings(BIND_HOST, CONFIGURED_APP_TOKEN)
+    method = sign_in_method()
+    check_startup_settings(BIND_HOST, method)
+    if method == "builtin" and OWN_SIGN_IN.needs_setup():
+        OWN_SIGN_IN.setup_code()
     logger.info(f"WEBSITE: listening on {BIND_HOST}:{APP_PORT}, open http://localhost:{APP_PORT}")
     try:
         app.run(host=BIND_HOST, port=APP_PORT, debug=False)

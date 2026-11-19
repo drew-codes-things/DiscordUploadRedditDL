@@ -24,6 +24,7 @@ def media_post(post_id, title, permalink_path="/r/pics/comments/abc/title/"):
 def no_disk_or_delay(monkeypatch):
     monkeypatch.setattr(backend, "save_sent_posts", lambda posts: None)
     monkeypatch.setattr(backend, "WEBHOOK_POST_DELAY", 0)
+    monkeypatch.setattr(backend, "ALLOW_INSECURE", True)
 
 
 @responses.activate
