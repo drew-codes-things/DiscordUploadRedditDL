@@ -1,4 +1,5 @@
 import ipaddress
+import logging
 import os
 import shutil
 import stat
@@ -207,6 +208,21 @@ def test_only_the_no_sign_in_setting_is_kept_on_loopback():
     backend.check_startup_settings("0.0.0.0", "builtin")
     backend.check_startup_settings("0.0.0.0", "token")
     backend.check_startup_settings("127.0.0.1", "none")
+
+
+def test_starting_without_a_sign_in_says_so_loudly(caplog):
+    caplog.set_level(logging.INFO)
+    backend.check_startup_settings("127.0.0.1", "none")
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "ALLOW_INSECURE=true" in warnings[0] and "no sign-in" in warnings[0]
+
+
+@pytest.mark.parametrize("method", ["builtin", "token"])
+def test_starting_with_a_sign_in_gives_no_such_warning(caplog, method):
+    caplog.set_level(logging.INFO)
+    backend.check_startup_settings("127.0.0.1", method)
+    assert [record for record in caplog.records if record.levelno >= logging.WARNING] == []
 
 
 def import_app(tmp_path, shown="backend.OWN_SIGN_IN.secret.decode()", **settings):
